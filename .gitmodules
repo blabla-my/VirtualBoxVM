@@ -1,0 +1,3 @@
+[submodule "vbox_with_clang"]
+	path = vbox_with_clang
+	url = https://github.com/blabla-my/vbox_with_clang.git
