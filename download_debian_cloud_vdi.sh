@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 OUTPUT_DIR="${SCRIPT_DIR}/images"
-SUITE="bookworm"
+SUITE="trixie"
 ARCH="amd64"
-VARIANT="genericcloud"
+VARIANT="nocloud"
 BASE_URL=""
 IMAGE_URL=""
 IMAGE_NAME=""
@@ -46,8 +46,8 @@ Options:
 
 Examples:
   $(basename "$0")
-  $(basename "$0") --suite trixie --image-name debian-13-genericcloud-amd64.qcow2
-  $(basename "$0") --url https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+  $(basename "$0") --suite trixie --image-name debian-13-nocloud-amd64.qcow2
+  $(basename "$0") --url https://cloud.debian.org/images/cloud/trixie/latest/debian-13-nocloud-amd64.qcow2
 EOF
 }
 
