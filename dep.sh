@@ -8,4 +8,4 @@ apt-get install --no-install-recommends acpica-tools chrpath doxygen g++-multili
         texlive texlive-fonts-extra texlive-latex-extra unzip xsltproc \
         default-jdk libstdc++5 libxslt1-dev linux-headers-$(uname -r) makeself \
         mesa-common-dev subversion yasm zlib1g-dev glslang-tools \
-        libc6-dev-i386 lib32z1 lib32gcc-s1 lib32stdc++6 linux-headers-generic
+        libc6-dev-i386 lib32z1 lib32gcc-s1 lib32stdc++6 linux-headers-generic libvncserver-dev
