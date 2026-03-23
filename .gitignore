@@ -1,1 +1,8 @@
 images/*
+VirtualBox-7.2.6/
+VirtualBox-7.2.6.tar.bz2
+.vbox-user-home/
+vms/
+*.profraw
+*-VBoxManage-*.log
+*.log
