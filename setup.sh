@@ -88,7 +88,7 @@ vbox_manage "$BIN_DIR" createvm --name "$NAME" --ostype Debian_64 --register
 vm_created=1
 vbox_manage "$BIN_DIR" modifyvm "$NAME" \
     --cpus 4 \
-    --memory 1024 \
+    --memory 4096 \
     --vram 128 \
     --graphicscontroller vmsvga \
     --usbohci on \
