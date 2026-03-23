@@ -16,8 +16,37 @@ VNC_ADDRESS=${VNC_ADDRESS:-0.0.0.0}
 VNC_PORT=${VNC_PORT:-5910}
 VNC_PASSWORD=${VNC_PASSWORD:-}
 SERIAL_PORT=${SERIAL_PORT:-5001}
+ATTACH_INSTALLER_ISO=1
 
-[[ -f "$INSTALLER_ISO" ]] || vbox_die "Missing installer ISO: ${INSTALLER_ISO}. Run ./download_debian_cloud_vdi.sh first."
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [--no-iso|--noiso]
+
+Options:
+  --no-iso, --noiso  Do not attach installer ISO; boot directly from VDI.
+  -h, --help         Show this help text.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-iso|--noiso)
+            ATTACH_INSTALLER_ISO=0
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            vbox_die "Unknown argument: $1"
+            ;;
+    esac
+done
+
+if [[ "$ATTACH_INSTALLER_ISO" == "1" ]]; then
+    [[ -f "$INSTALLER_ISO" ]] || vbox_die "Missing installer ISO: ${INSTALLER_ISO}. Run ./download_debian_cloud_vdi.sh first."
+fi
 [[ "$SERIAL_PORT" =~ ^[0-9]+$ ]] || vbox_die "SERIAL_PORT must be a numeric TCP port."
 [[ "$DISK_SIZE_MB" =~ ^[0-9]+$ ]] || vbox_die "DISK_SIZE_MB must be a numeric size in MB."
 if [[ "$VNC_ENABLED" == "1" ]]; then
@@ -71,8 +100,10 @@ if ! vbox_manage "$BIN_DIR" storagectl "$NAME" --name "SCSI Controller" --add vi
     vbox_die "Failed to create VirtIO-SCSI controller. This VBoxManage build expects '--add virtio-scsi' for the storage bus."
 fi
 vbox_manage "$BIN_DIR" storageattach "$NAME" --storagectl "SCSI Controller" --port 0 --device 0 --type hdd --medium "$VDI_IMAGE"
-vbox_manage "$BIN_DIR" storagectl "$NAME" --name "IDE Controller" --add ide
-vbox_manage "$BIN_DIR" storageattach "$NAME" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium "$INSTALLER_ISO"
+if [[ "$ATTACH_INSTALLER_ISO" == "1" ]]; then
+    vbox_manage "$BIN_DIR" storagectl "$NAME" --name "IDE Controller" --add ide
+    vbox_manage "$BIN_DIR" storageattach "$NAME" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium "$INSTALLER_ISO"
+fi
 
 # Expose guest ttyS0 as a host TCP listener so it can be accessed via telnet.
 vbox_manage "$BIN_DIR" modifyvm "$NAME" --uart1 0x3F8 4
@@ -90,6 +121,10 @@ else
 fi
 
 vbox_manage "$BIN_DIR" modifyvm "$NAME" --natpf1 "guestssh,tcp,,2223,,22"
-vbox_manage "$BIN_DIR" modifyvm "$NAME" --boot1 dvd --boot2 disk --boot3 none
+if [[ "$ATTACH_INSTALLER_ISO" == "1" ]]; then
+    vbox_manage "$BIN_DIR" modifyvm "$NAME" --boot1 dvd --boot2 disk --boot3 none
+else
+    vbox_manage "$BIN_DIR" modifyvm "$NAME" --boot1 disk --boot2 none --boot3 none
+fi
 
 trap - ERR
