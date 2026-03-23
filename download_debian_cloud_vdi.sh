@@ -3,14 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 OUTPUT_DIR="${SCRIPT_DIR}/images"
-SUITE="trixie"
+RELEASE_MAJOR="13"
 ARCH="amd64"
-VARIANT="nocloud"
+ISO_FLAVOR="netinst"
 BASE_URL=""
-IMAGE_URL=""
-IMAGE_NAME=""
+ISO_URL=""
+ISO_NAME=""
 FORCE=0
-KEEP_QCOW2=1
 
 log() {
   printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
@@ -21,57 +20,41 @@ die() {
   exit 1
 }
 
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [options]
-
-Download a Debian cloud image and convert it to VDI format.
-
-Options:
-  --suite <name>         Debian suite used for the default download URL.
-                         Default: ${SUITE}
-  --arch <name>          Architecture suffix in the image name.
-                         Default: ${ARCH}
-  --variant <name>       Cloud image variant in the file name.
-                         Default: ${VARIANT}
-  --base-url <url>       Override the directory that contains the image and SHA512SUMS.
-  --url <url>            Full QCOW2 URL. Overrides --suite/--base-url defaults.
-  --image-name <name>    Override the QCOW2 file name.
-  --output-dir <dir>     Directory for the downloaded QCOW2 and converted VDI.
-                         Default: ${OUTPUT_DIR}
-  --force                Redownload and reconvert even if files already exist.
-  --remove-qcow2         Delete the QCOW2 after conversion.
-  --keep-qcow2           Keep the QCOW2 after conversion. Default behavior.
-  -h, --help             Show this help text.
-
-Examples:
-  $(basename "$0")
-  $(basename "$0") --suite trixie --image-name debian-13-nocloud-amd64.qcow2
-  $(basename "$0") --url https://cloud.debian.org/images/cloud/trixie/latest/debian-13-nocloud-amd64.qcow2
-EOF
-}
-
-default_image_name() {
-  local suite=$1
-  local arch=$2
-  local variant=$3
-
-  case "$suite" in
-    bullseye) printf 'debian-11-%s-%s.qcow2\n' "$variant" "$arch" ;;
-    bookworm) printf 'debian-12-%s-%s.qcow2\n' "$variant" "$arch" ;;
-    trixie) printf 'debian-13-%s-%s.qcow2\n' "$variant" "$arch" ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
 require_command() {
   have_command "$1" || die "Missing required command: $1"
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Download Debian installer ISO (default: Debian 13 amd64 netinst) and verify
+its SHA256 checksum.
+
+Options:
+  --release-major <n>     Debian major release.
+                           Default: ${RELEASE_MAJOR}
+  --arch <name>           Architecture suffix in the ISO file name.
+                           Default: ${ARCH}
+  --flavor <name>         Installer flavor in the ISO file name.
+                           Default: ${ISO_FLAVOR}
+  --base-url <url>        Directory containing ISO + SHA256SUMS.
+  --url <url>             Full ISO URL. Overrides --base-url defaults.
+  --iso-name <name>       Explicit ISO file name (when --url is not set).
+  --output-dir <dir>      Directory to store ISO and checksum file.
+                           Default: ${OUTPUT_DIR}
+  --force                 Redownload even if local file already exists.
+  -h, --help              Show this help text.
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") --release-major 13 --arch amd64 --flavor netinst
+  $(basename "$0") --url https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.1.0-amd64-netinst.iso
+EOF
 }
 
 download_file() {
@@ -98,12 +81,31 @@ download_file() {
   mv -f -- "$tmp_path" "$dest"
 }
 
-verify_checksum() {
+resolve_iso_name_from_sums() {
   local sums_file=$1
-  local image_name=$2
+  local release_major=$2
+  local arch=$3
+  local flavor=$4
+
+  awk -v release_major="$release_major" -v arch="$arch" -v flavor="$flavor" '
+    {
+      file = $2
+      sub(/^\*/, "", file)
+      pattern = "^debian-" release_major "([.][0-9]+)*-" arch "-" flavor "[.]iso$"
+      if (file ~ pattern) {
+        print file
+        exit
+      }
+    }
+  ' "$sums_file"
+}
+
+verify_checksum_sha256() {
+  local sums_file=$1
+  local iso_name=$2
   local expected
 
-  expected=$(awk -v name="$image_name" '
+  expected=$(awk -v name="$iso_name" '
     {
       file = $2
       sub(/^\*/, "", file)
@@ -114,35 +116,20 @@ verify_checksum() {
     }
   ' "$sums_file")
 
-  [[ -n "$expected" ]] || die "Could not find checksum for ${image_name} in ${sums_file}"
+  [[ -n "$expected" ]] || die "Could not find checksum for ${iso_name} in ${sums_file}"
 
-  log "Verifying SHA512 checksum for ${image_name}"
-  printf '%s  %s\n' "$expected" "$image_name" | (
+  log "Verifying SHA256 checksum for ${iso_name}"
+  printf '%s  %s\n' "$expected" "$iso_name" | (
     cd "$OUTPUT_DIR"
-    sha512sum -c -
+    sha256sum -c -
   )
-}
-
-convert_to_vdi() {
-  local source_path=$1
-  local target_path=$2
-  local tmp_path="${target_path}.part.$$"
-
-  if [[ -f "$target_path" && "$FORCE" -eq 0 ]]; then
-    log "Using existing $(basename "$target_path")"
-    return 0
-  fi
-
-  log "Converting $(basename "$source_path") to $(basename "$target_path")"
-  qemu-img convert -p -f qcow2 -O vdi "$source_path" "$tmp_path"
-  mv -f -- "$tmp_path" "$target_path"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --suite)
+    --release-major)
       [[ $# -ge 2 ]] || die "Missing value for $1"
-      SUITE=$2
+      RELEASE_MAJOR=$2
       shift 2
       ;;
     --arch)
@@ -150,9 +137,9 @@ while [[ $# -gt 0 ]]; do
       ARCH=$2
       shift 2
       ;;
-    --variant)
+    --flavor)
       [[ $# -ge 2 ]] || die "Missing value for $1"
-      VARIANT=$2
+      ISO_FLAVOR=$2
       shift 2
       ;;
     --base-url)
@@ -162,12 +149,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --url)
       [[ $# -ge 2 ]] || die "Missing value for $1"
-      IMAGE_URL=$2
+      ISO_URL=$2
       shift 2
       ;;
-    --image-name)
+    --iso-name)
       [[ $# -ge 2 ]] || die "Missing value for $1"
-      IMAGE_NAME=$2
+      ISO_NAME=$2
       shift 2
       ;;
     --output-dir)
@@ -177,14 +164,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force)
       FORCE=1
-      shift
-      ;;
-    --remove-qcow2)
-      KEEP_QCOW2=0
-      shift
-      ;;
-    --keep-qcow2)
-      KEEP_QCOW2=1
       shift
       ;;
     -h|--help)
@@ -197,39 +176,49 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-require_command qemu-img
-require_command sha512sum
+require_command sha256sum
 
-if [[ -n "$IMAGE_URL" ]]; then
-  [[ -n "$BASE_URL" ]] || BASE_URL=${IMAGE_URL%/*}
-  [[ -n "$IMAGE_NAME" ]] || IMAGE_NAME=${IMAGE_URL##*/}
+if [[ -n "$ISO_URL" ]]; then
+  [[ -n "$BASE_URL" ]] || BASE_URL=${ISO_URL%/*}
+  [[ -n "$ISO_NAME" ]] || ISO_NAME=${ISO_URL##*/}
 else
-  [[ -n "$BASE_URL" ]] || BASE_URL="https://cloud.debian.org/images/cloud/${SUITE}/latest"
-  if [[ -z "$IMAGE_NAME" ]]; then
-    IMAGE_NAME=$(default_image_name "$SUITE" "$ARCH" "$VARIANT") \
-      || die "Unknown suite '${SUITE}'. Pass --image-name or --url explicitly."
+  if [[ -z "$BASE_URL" ]]; then
+    media_dir="iso-cd"
+    if [[ "$ISO_FLAVOR" == DVD-* || "$ISO_FLAVOR" == BD-* ]]; then
+      media_dir="iso-dvd"
+    fi
+    BASE_URL="https://cdimage.debian.org/debian-cd/current/${ARCH}/${media_dir}"
   fi
-  IMAGE_URL="${BASE_URL}/${IMAGE_NAME}"
 fi
 
-CHECKSUM_URL="${BASE_URL}/SHA512SUMS"
-QCOW_PATH="${OUTPUT_DIR}/${IMAGE_NAME}"
-VDI_NAME="${IMAGE_NAME%.qcow2}.vdi"
-VDI_PATH="${OUTPUT_DIR}/${VDI_NAME}"
-SUMS_PATH="${OUTPUT_DIR}/SHA512SUMS"
+CHECKSUM_URL="${BASE_URL}/SHA256SUMS"
+SUMS_PATH="${OUTPUT_DIR}/SHA256SUMS"
+ALIAS_NAME="debian-${RELEASE_MAJOR}-${ARCH}-${ISO_FLAVOR}.iso"
+ALIAS_PATH="${OUTPUT_DIR}/${ALIAS_NAME}"
 
 mkdir -p -- "$OUTPUT_DIR"
 
 download_file "$CHECKSUM_URL" "$SUMS_PATH" 1
-download_file "$IMAGE_URL" "$QCOW_PATH"
-verify_checksum "$SUMS_PATH" "$IMAGE_NAME"
-convert_to_vdi "$QCOW_PATH" "$VDI_PATH"
 
-if [[ "$KEEP_QCOW2" -eq 0 ]]; then
-  log "Removing source QCOW2 image"
-  rm -f -- "$QCOW_PATH"
+if [[ -z "$ISO_NAME" ]]; then
+  ISO_NAME=$(resolve_iso_name_from_sums "$SUMS_PATH" "$RELEASE_MAJOR" "$ARCH" "$ISO_FLAVOR")
+  [[ -n "$ISO_NAME" ]] || die "Could not find matching ISO in SHA256SUMS (release=${RELEASE_MAJOR}, arch=${ARCH}, flavor=${ISO_FLAVOR})."
+  ISO_URL="${BASE_URL}/${ISO_NAME}"
+elif [[ -z "$ISO_URL" ]]; then
+  ISO_URL="${BASE_URL}/${ISO_NAME}"
+fi
+
+ISO_PATH="${OUTPUT_DIR}/${ISO_NAME}"
+
+download_file "$ISO_URL" "$ISO_PATH"
+verify_checksum_sha256 "$SUMS_PATH" "$ISO_NAME"
+
+if [[ "$ISO_NAME" != "$ALIAS_NAME" ]]; then
+  ln -sfn "$ISO_NAME" "$ALIAS_PATH"
+  log "Alias: ${ALIAS_PATH} -> ${ISO_NAME}"
+else
+  log "Alias: ${ALIAS_PATH}"
 fi
 
 log "Done"
-log "QCOW2: ${QCOW_PATH}"
-log "VDI:   ${VDI_PATH}"
+log "ISO:   ${ISO_PATH}"
